@@ -6,10 +6,12 @@ use nom::combinator::map;
 use nom::multi::separated_list1;
 use nom::sequence::{preceded, tuple};
 use nom::{bytes::complete::tag, IResult};
+use std::collections::hash_map::Entry;
 use std::{
     collections::{BTreeSet, HashMap},
     io::{BufRead, Cursor},
 };
+use std::{dbg, println};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Name([u8; 2]);
@@ -57,6 +59,7 @@ struct Solution {
     dis: Vec<Vec<u64>>,
     f: HashMap<State, u64>,
     state_map: HashMap<State, State>,
+    opened_map: HashMap<BTreeSet<usize>, u64>,
 }
 
 impl Solution {
@@ -67,26 +70,22 @@ impl Solution {
             valve_map,
             f: HashMap::new(),
             state_map: HashMap::new(),
+            opened_map: HashMap::new(),
         }
     }
 
-    fn find_best(&mut self) -> u64 {
+    fn clear(&mut self) {
+        self.f = HashMap::new();
+        self.state_map = HashMap::new();
+        self.opened_map = HashMap::new();
+    }
+
+    fn find_best(&mut self, time: u64) -> u64 {
         let start = self.valve_map[&Name(*b"AA")];
         // don't open first
-        let mut state = State(start, 30, BTreeSet::new());
-        let mut ans = self.dfs(state.clone());
+        let mut state = State(start, time, BTreeSet::new());
+        let ans = self.dfs(state.clone(), 0);
 
-        let mut max_state = state.clone();
-
-        // open first
-        state = State(start, 29, BTreeSet::from([start]));
-        let val = self.dfs(state.clone());
-        if ans < val {
-            max_state = state;
-            ans = val;
-        }
-
-        state = max_state;
         println!(
             "{} state: {:?}; reword current {} after {}",
             self.valves[state.0]
@@ -96,11 +95,7 @@ impl Solution {
                 .map(|&c| c as char)
                 .collect::<String>(),
             state,
-            if state.2.contains(&state.0) {
-                self.valves[state.0].flow * state.1
-            } else {
-                0
-            },
+            0,
             self.f[&state],
         );
         while let Some(next_state) = self.state_map.get(&state) {
@@ -122,20 +117,31 @@ impl Solution {
         ans
     }
 
-    fn dfs(&mut self, state: State) -> u64 {
+    fn dfs(&mut self, state: State, reword: u64) -> u64 {
         let from = state.0;
         let t = state.1;
+        // update opened map
+        match self.opened_map.entry(state.2.clone()) {
+            Entry::Occupied(o) => {
+                let v = o.into_mut();
+                *v = (*v).max(reword);
+            }
+            Entry::Vacant(v) => {
+                v.insert(0);
+            }
+        }
+        // end condition
         if state.1 == 0 || state.2.len() == self.valves.len() {
             return 0;
         }
-        if let Some(&val) = self.f.get(&state) {
-            return val;
-        }
+        // memory state
+        // if let Some(&val) = self.f.get(&state) {
+        //     return val;
+        // }
         let mut ans = 0;
         let mut state_from = None;
         for to in 0..self.valves.len() {
-            if from == to
-                || self.dis[from][to] == u64::MAX
+            if self.dis[from][to] == u64::MAX
                 || state.2.contains(&to)
                 || self.dis[from][to] + 1 > t
                 || self.valves[to].flow == 0
@@ -144,8 +150,9 @@ impl Solution {
             }
             let mut new_set = state.2.clone();
             new_set.insert(to);
-            let new_state = State(to, t - self.dis[from][to] - 1, new_set);
-            let val = self.dfs(new_state.clone());
+            let new_t = t - self.dis[from][to] - 1;
+            let new_state = State(to, new_t, new_set);
+            let val = self.dfs(new_state.clone(), reword + self.valves[to].flow * new_t);
             if ans < val {
                 ans = val;
                 state_from = Some(new_state);
@@ -194,7 +201,25 @@ fn main() -> Result<()> {
     }
 
     let mut sol = Solution::new(valves.clone(), dis, valve_map);
-    dbg!(sol.find_best());
+    dbg!(sol.find_best(30));
+
+    sol.clear();
+
+    sol.find_best(26);
+    let mut entries: Vec<_> = sol.opened_map.into_iter().collect();
+    entries.sort_by_key(|e| std::cmp::Reverse(e.1));
+    println!("{}", entries.len());
+
+    let mut part2 = 0;
+    let n = entries.len();
+    for i in 0..n {
+        for j in i + 1..n {
+            if entries[i].0.is_disjoint(&entries[j].0) {
+                part2 = part2.max(entries[i].1 + entries[j].1);
+            }
+        }
+    }
+    dbg!(part2);
 
     Ok(())
 }
